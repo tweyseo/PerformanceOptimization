@@ -17,13 +17,13 @@ before:
 'addErrHandler' run [500000] times, elapsed time: 5.3339998722076
 'addHandler' run [500000] times, elapsed time: 4.9950001239777
 # group 2
-'addMiddleware' run [500000] times, elapsed time: 5.2669999599457
-'addErrHandler' run [500000] times, elapsed time: 5.3320000171661
-'addHandler' run [500000] times, elapsed time: 5.0889999866486
+'addMiddleware' run [500000] times, elapsed time: 5.2730000019073
+'addErrHandler' run [500000] times, elapsed time: 5.2330000400543
+'addHandler' run [500000] times, elapsed time: 4.9000000953674
 # group 3
-'addMiddleware' run [500000] times, elapsed time: 5.231999874115
-'addErrHandler' run [500000] times, elapsed time: 5.1549999713898
-'addHandler' run [500000] times, elapsed time: 4.8980000019073
+'addMiddleware' run [500000] times, elapsed time: 5.0650000572205
+'addErrHandler' run [500000] times, elapsed time: 5.2379999160767
+'addHandler' run [500000] times, elapsed time: 4.8619999885559
 ```
 
 optimize:

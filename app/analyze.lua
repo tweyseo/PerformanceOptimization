@@ -1,6 +1,7 @@
-require("jit.v").on("appTrace.log")
+local v = require("jit.v")
+v.on("appTrace.log")
 
-local max = 10e3
+local max = 10
 local function trace(op, app)
     for _ = 1, max do
         op(app)

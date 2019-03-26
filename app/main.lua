@@ -1,3 +1,4 @@
+require("resty.core") -- should be add at stage of init_worker_by_lua
 -- comment this function to log result
 local function print() end
 
