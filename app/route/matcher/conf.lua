@@ -1,0 +1,5 @@
+return {
+    rootPath = "/",
+    caret = "^",
+    slash = "/"
+}
