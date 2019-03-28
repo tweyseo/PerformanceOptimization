@@ -20,6 +20,14 @@ function Router:new(routeMode)
     return instance
 end
 
+function Router:addMiddlewares(path, func)
+    self.matcher:addMiddlewares(path, func)
+end
+
+function Router:addErrHandler(path, func)
+    self.matcher:addErrHandler(path, func)
+end
+
 local function mergeHandlers(node)
     local handlers
     if node.middlewares == nil then

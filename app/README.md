@@ -6,6 +6,19 @@ It's a minimalist web framework based on [OpenResty](https://github.com/openrest
 
 There will be a series of optimizations on it with LuaJIT's [jit.v](https://github.com/LuaJIT/LuaJIT/blob/master/src/jit/v.lua) module and some LuaJIT tools in [stap](https://github.com/openresty/stapxx#lj-vm-states). the purpose is not only to optimize the framework, but also to practice the [jit.v](https://github.com/LuaJIT/LuaJIT/blob/master/src/jit/v.lua) and LuaJIT tools in [stap](https://github.com/openresty/stapxx#lj-vm-states).
 
+## **Usage**
+
+```
+cd /home/tweyseo/deps/OR-1.13.6.2-pcrejit/luatest/resty/PerformanceOptimization/app
+export PATH=/home/tweyseo/deps/OR-1.13.6.2-pcrejit/bin:$PATH
+# get the trace log
+resty -I=../ -j v analyze.lua
+# get the elapsed time log
+resty -I=../ run.lua
+# get the result of run
+resty -I=../ test.lua
+```
+
 ## **Stage**
 
 **2019-3-26 optimize on `add*` operation**:

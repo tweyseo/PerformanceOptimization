@@ -14,7 +14,8 @@ local split = require("ngx.re").split
 local mwIdx, ehIdx, hdIdx = 1, 2, 3 -- for instance.nodes.path
 local pathIdx, methodIdx, nodeIdx, countIdx = 1, 2, 3, 4  --for instance.cache
 local rootGroupId = 1
-local defaultOnionLayer = 6
+local defaultGroupLength = 64
+local additionalLength = #conf.caret + #conf.slash
 
 -- static route for exact match (URI without colon and regex)
 -- note that addMiddlewares and addErrHandlers must be invoked before calling addHandler
@@ -32,9 +33,9 @@ function Hash:new()
         , { path1 = { function1, function2, ... } , path2 = { function1, function2, ... }, ... }
         , ... }
     ]]
-    instance.middlewares = utils.newTab(defaultOnionLayer, 0)
-    -- as middlewares
-    instance.errHandlers = utils.newTab(defaultOnionLayer, 0)
+    instance.middlewares = utils.newTab(defaultGroupLength, 0)
+    -- similar with middlewares
+    instance.errHandlers = utils.newTab(defaultGroupLength, 0)
     --[[
         nodes = {
             path = {
@@ -48,7 +49,16 @@ function Hash:new()
     instance.cache = {}
     setmetatable(instance, { __index = self })
 
+    instance:init()
+
     return instance
+end
+
+function Hash:init()
+    for i = 1, defaultGroupLength do
+        self.middlewares[i] = {}
+        self.errHandlers[i] = {}
+    end
 end
 
 -- return groupId and more regular path for easier generation of static routes
@@ -79,10 +89,6 @@ function Hash:addMiddlewares(path, func)
 
     local groupId, newPath = groupPath(path)
     local group = self.middlewares[groupId]
-    if group == nil then
-        self.middlewares[groupId] = { [newPath] = { func } }
-        return
-    end
 
     local funcList = group[newPath]
     if funcList == nil then
@@ -102,10 +108,6 @@ function Hash:addErrHandlers(path, func)
 
     local groupId, newPath = groupPath(path)
     local group = self.errHandlers[groupId]
-    if group == nil then
-        self.errHandlers[groupId] = { [newPath] = { func } }
-        return
-    end
 
     local funcList = group[newPath]
     if funcList == nil then
@@ -119,8 +121,7 @@ end
 -- collect handlers from middlewares or errHandlers for generation of static routes
 local function collectHandlers(groups, srcPath)
     local handlerList = {}
-    -- there may hole in the groups, so traverse with pairs
-    for groupId, group in pairs(groups) do
+    for groupId, group in ipairs(groups) do
         -- root path
         if groupId == rootGroupId then
             for _, func in ipairs(group[conf.rootPath]) do
@@ -128,7 +129,9 @@ local function collectHandlers(groups, srcPath)
             end
         else
             for path, funcList in pairs(group) do
-                if find(srcPath..conf.slash, path, "jo") ~= nil then
+                -- filter with length first, and additionalLength is length of caret and slash
+                if #srcPath >= #path - additionalLength
+                    and find(srcPath..conf.slash, path, "jo") ~= nil then
                     for _, func in ipairs(funcList) do
                         insert(handlerList, func)
                     end
