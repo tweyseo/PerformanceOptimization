@@ -1,23 +1,15 @@
-local v = require("jit.v")
-v.on("appTrace.log")
+require("jit.v").on("vlog")
+local main = require("main")
 
-local max = 10
+local max = 1e3
 local function trace(op, app)
     for _ = 1, max do
         op(app)
     end
 end
 
-local main = require("main")
-
-local app1 = main.init()
-trace(main.addMiddleware, app1)
---[[trace(main.addErrHandler, app1)
-trace(main.addHandler, app1)]]
-
---[[local app2 = main.init()
-main.addMiddleware(app2)
-main.addErrHandler(app2)
-main.addHandler(app2)
-trace(main.run, app2)]]
-
+local app = main.init()
+main.addMiddleware(app)
+main.addErrHandler(app)
+main.addHandler(app)
+trace(main.run, app)
