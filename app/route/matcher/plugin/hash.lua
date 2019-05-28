@@ -5,21 +5,22 @@ local pairs = pairs
 local ipairs = ipairs
 local find = ngx.re.find -- todo: add resty.core
 local insert = table.insert
+local lower = string.lower
 local error = error
 -- include
 local conf = require("app.route.matcher.conf")
 local utils = require("app.utils")
 local split = require("ngx.re").split
 -- const
-local mwIdx, ehIdx, hdIdx = 1, 2, 3 -- for instance.nodes.path
-local pathIdx, methodIdx, nodeIdx, countIdx = 1, 2, 3, 4  --for instance.cache
+local hIdx, ehIdx = 1, 2 -- for instance.nodes.path
+local keyIdx, nodeIdx, countIdx = 1, 2, 3  --for instance.cache
 local rootGroupId = 1
-local defaultGroupLength = 64
+local defaultGroupLength = 10
 local additionalLength = #conf.caret + #conf.slash
 
 -- static route for exact match (URI without colon and regex)
 -- note that addMiddlewares and addErrHandlers must be invoked before calling addHandler
-local Hash = {}
+local Hash = utils.newTab(0, 7)
 
 function Hash:new()
     local instance = {}
@@ -34,14 +35,15 @@ function Hash:new()
         , ... }
     ]]
     instance.middlewares = utils.newTab(defaultGroupLength, 0)
+    instance.mwCursor = 0
     -- similar with middlewares
     instance.errHandlers = utils.newTab(defaultGroupLength, 0)
+    instance.ehCursor = 0
     --[[
         nodes = {
-            path = {
-            { function1, function2, ... }   -- middlewares under this path
-            , { function1, function2, ... } -- errHandlers under this path
-            , { method1 = function1, method2 = function2, ... } -- method handler under this path
+            path:method = {
+                { function1, function2, ... }   -- middlewares and method handler under this path
+                , { function1, function2, ... } -- errHandlers under this path
             } }
     ]]
     instance.nodes = {}
@@ -49,16 +51,7 @@ function Hash:new()
     instance.cache = {}
     setmetatable(instance, { __index = self })
 
-    instance:init()
-
     return instance
-end
-
-function Hash:init()
-    for i = 1, defaultGroupLength do
-        self.middlewares[i] = {}
-        self.errHandlers[i] = {}
-    end
 end
 
 -- return groupId and more regular path for easier generation of static routes
@@ -80,6 +73,18 @@ local function groupPath(path)
     return #m, conf.caret..path..conf.slash
 end
 
+local function dynamicArray(array, cursor, index)
+    if index <= cursor then
+        return cursor
+    end
+
+    for _ = 1, index - cursor do
+        insert(array, {})
+    end
+    -- return index as new cursor
+    return index
+end
+
 -- nil path means root "/"
 function Hash:addMiddlewares(path, func)
     if type(path) == "function" then
@@ -88,8 +93,9 @@ function Hash:addMiddlewares(path, func)
     end
 
     local groupId, newPath = groupPath(path)
-    local group = self.middlewares[groupId]
+    self.mwCursor = dynamicArray(self.middlewares, self.mwCursor, groupId)
 
+    local group = self.middlewares[groupId]
     local funcList = group[newPath]
     if funcList == nil then
         group[newPath] = { func }
@@ -107,8 +113,9 @@ function Hash:addErrHandlers(path, func)
     end
 
     local groupId, newPath = groupPath(path)
-    local group = self.errHandlers[groupId]
+    self.ehCursor = dynamicArray(self.errHandlers, self.ehCursor, groupId)
 
+    local group = self.errHandlers[groupId]
     local funcList = group[newPath]
     if funcList == nil then
         group[newPath] = { func }
@@ -122,8 +129,8 @@ end
 local function collectHandlers(groups, srcPath)
     local handlerList = {}
     for groupId, group in ipairs(groups) do
-        -- root path
-        if groupId == rootGroupId then
+        -- root path and can be empty
+        if groupId == rootGroupId and group[conf.rootPath] ~= nil then
             for _, func in ipairs(group[conf.rootPath]) do
                 insert(handlerList, func)
             end
@@ -145,16 +152,15 @@ end
 
 -- note that, different path with different method only map one handler.
 function Hash:addHandler(method, path, func)
-    local node = self.nodes[path]
-    if node == nil then
-        self.nodes[path] = { collectHandlers(self.middlewares, path)
-            , collectHandlers(self.errHandlers, path)
-            , { [method] = func } }
-
+    local key = path..conf.colon..lower(method)
+    local node = self.nodes[key]
+    --if node == nil then
+        local handlers = collectHandlers(self.middlewares, path)
+        insert(handlers, func)
+        self.nodes[key] = { handlers, collectHandlers(self.errHandlers, path) }
+        -- ignore, if already exists
         return
-    end
-    -- override the old method handler function (if already exists)
-    node[hdIdx][method] = func
+    --end
 end
 
 --[[
@@ -167,17 +173,18 @@ function Hash:rootErrHandlers()
     return rootGroup and rootGroup[conf.rootPath]
 end
 
-local function searchCache(self, path, method)
+local function searchCache(self, key)
     local cache = self.cache
-    if cache[pathIdx] == path and cache[methodIdx] == method then
+    if cache[keyIdx] == key then
         cache[countIdx] = cache[countIdx] + 1
         return cache[nodeIdx]
     end
 end
 
-local function missCache(self, path, method, node)
-    if self.cache[countIdx] == nil or self.cache[countIdx] == 1 then
-        self.cache = { path, method, node, 1 }
+local function missCache(self, key, node)
+    local cache = self.cache
+    if cache[countIdx] == nil or cache[countIdx] == 1 then
+        self.cache = { key, node, 1 }
         return
     end
 
@@ -186,37 +193,28 @@ end
 
 function Hash:dumpCache()
     local cache = self.cache
-    return { path = cache[pathIdx], method = cache[methodIdx], count = cache[countIdx] }
+    return { key = cache[keyIdx], count = cache[countIdx] }
 end
 
 function Hash:capture(path, method)
-    local node = searchCache(self, path, method)
+    local key = path..conf.colon..lower(method)
+    local node = searchCache(self, key)
     if node ~= nil then
-        return { middlewares = node[mwIdx], errHandlers = node[ehIdx]
-            , handler = node[hdIdx][method] }
+        return { handlers = node[hIdx], errHandlers = node[ehIdx] }
     end
 
     local miss = true
-    node = self.nodes[path]
+    node = self.nodes[key]
     if node == nil then
-        return
-    end
-
-    local pathHandlers = node[hdIdx]
-    if pathHandlers == nil then
-        return
-    end
-
-    local methodHandler = pathHandlers[method]
-    if methodHandler == nil then
+        -- just do effective cache miss
         return
     end
 
     if miss == true then
-        missCache(self, path, method, node)
+        missCache(self, key, node)
     end
 
-    return { middlewares = node[mwIdx], errHandlers = node[ehIdx], handler = methodHandler }
+    return { handlers = node[hIdx], errHandlers = node[ehIdx] }
 end
 
 return Hash

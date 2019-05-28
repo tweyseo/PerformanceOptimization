@@ -1,5 +1,6 @@
 return {
     rootPath = "/",
     caret = "^",
-    slash = "/"
+    slash = "/",
+    colon = ":"
 }

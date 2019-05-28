@@ -1,8 +1,5 @@
 -- function reference
 local setmetatable = setmetatable
-local ipairs = ipairs
-local lower = string.lower
-local insert = table.insert
 local xpcall = xpcall
 local traceback = debug.traceback
 -- include
@@ -10,7 +7,41 @@ local routerConf = require("app.conf").router
 local Matcher = require("app.route.matcher.index")
 local utils = require("app.utils")
 
-local Router = {}
+-- replace closure to forbid NYI
+local Chain = utils.newTab(0, 1)
+
+local handlersProc = function(self, err)
+    if err ~= nil then
+        return self.errProcess(err, self.req, self.resp, self.errHandlers, self.finalHandler)
+    end
+
+    if self.idx >= self.len then
+        return self.finalHandler()
+    end
+
+    self.idx = self.idx + 1
+    return self.handlers[self.idx](self.req, self.resp, self)
+end
+
+local errHandlersProc = function(self, err)
+    if self.idx <= 1 then
+        return self.finalHandler()
+    end
+
+    self.idx = self.idx - 1
+    return self.errHandlers[self.idx](err, self.req, self.resp, self)
+end
+
+function Chain.new(len, proc)
+    local instance = utils.newTab(0, len)
+    setmetatable(instance, { __call = proc })
+
+    return instance
+end
+
+---
+
+local Router = utils.newTab(0, 7)
 
 function Router:new(routeMode)
     local instance = {}
@@ -20,102 +51,72 @@ function Router:new(routeMode)
     return instance
 end
 
-function Router:addMiddlewares(path, func)
-    self.matcher:addMiddlewares(path, func)
-end
-
-function Router:addErrHandler(path, func)
-    self.matcher:addErrHandler(path, func)
-end
-
-local function mergeHandlers(node)
-    local handlers
-    if node.middlewares == nil then
-        handlers = { node.handler }
-    else
-        handlers = utils.newTab(#node.middlewares, 0)
-        -- deep copy
-        for i, v in ipairs(node.middlewares) do
-            handlers[i] = v
-        end
-
-        insert(handlers, node.handler)
-    end
-
-    return handlers
-end
-
-function Router.errProcess(srcErr, req, resp, errHandlers, finalHandler)
+local function errProcess(srcErr, req, resp, errHandlers, finalHandler)
     if errHandlers == nil or #errHandlers == 0 then
         return finalHandler(srcErr)
     end
-    -- use onion model to invoke error handlers
-    local idx = #errHandlers + 1
-    local function next(err)
-        if idx <= 1 then
-            return finalHandler(nil)
-        end
 
-        idx = idx - 1
-        local errHandler = errHandlers[idx]
-        errHandler(err, req, resp, next)
+    -- use onion model to invoke error handlers
+    local next = Chain.new(5, errHandlersProc)
+    next.idx = #errHandlers + 1
+    next.finalHandler = finalHandler
+    next.errHandlers = errHandlers
+    next.req = req
+    next.resp = resp
+    return next(srcErr)
+end
+
+local function doProcess(req, resp, matcher, finalHandler, ref)
+    local path, method, Err404 = req.path, req.method, routerConf.Err404
+    if path == nil or method == nil then
+        resp:setStatus(Err404.ec)
+        -- use root error handler of the matcher to process 404 error
+        return errProcess(Err404.em, req, resp, matcher:rootErrHandlers(), finalHandler)
     end
 
-    next(srcErr)
+    -- node { handlers, errHandlers }
+    ref.node = matcher:capture(path, method)
+    if ref.node == nil then
+        resp:setStatus(Err404.ec)
+        -- use root error handler of the matcher to process 404 error
+        return errProcess(Err404.em, req, resp, matcher:rootErrHandlers(), finalHandler)
+    end
+
+    req:setFound(true)
+
+    local handlers = ref.node.handlers
+
+    -- use onion model to invoke handlers (middlewares and handler)
+    local next = Chain.new(8, handlersProc)
+    next.errProcess = errProcess
+    next.req = req
+    next.resp = resp
+    next.errHandlers = ref.node.errHandlers
+    next.finalHandler = finalHandler
+    next.idx = 0
+    next.len = #handlers
+    next.handlers = handlers
+    next()
 end
 
 function Router:process(req, resp, finalHandler)
-    local node
-    local pOk, pErr = xpcall(function()
-        local path, method, Err404 = req.path, lower(req.method), routerConf.Err404
-        if path == nil or method == nil then
-            resp:setStatus(Err404.ec)
-            -- use root error handler of the matcher to process 404 error
-            return self.errProcess(Err404.em, req, resp, self.matcher:rootErrHandlers()
-                , finalHandler)
+    local pOk, pErr
+    do
+        local ref = {}
+        pOk, pErr = xpcall(doProcess, traceback, req, resp, self.matcher, finalHandler, ref)
+
+        if pOk ~= true then
+            local node = ref.node
+            pOk, pErr = xpcall(errProcess, traceback, pErr, req, resp
+                , node and node.errHandlers or self.matcher:rootErrHandlers(), finalHandler)
         end
-
-        -- node { middlewares, errHandlers, handler }
-        node = self.matcher:capture(path, method)
-        if node == nil then
-            resp:setStatus(Err404.ec)
-            -- use root error handler of the matcher to process 404 error
-            return self.errProcess(Err404.em, req, resp, self.matcher:rootErrHandlers()
-                , finalHandler)
-        end
-
-        req:setFound(true)
-
-        -- merge middlewares and handler
-        local handlers = mergeHandlers(node)
-
-        -- use onion model to invoke handlers (middlewares and handler)
-        local idx, len = 0, #handlers
-        local function next(err)
-            if err ~= nil then
-                return self.errProcess(err, req, resp, node.errHandlers, finalHandler)
-            end
-
-            if idx >= len then
-                return finalHandler(nil)
-            end
-
-            idx = idx + 1
-            local handler = handlers[idx]
-            handler(req, resp, next)
-        end
-
-        next()
-    end, traceback)
-
-    if pOk ~= true then
-        pOk, pErr = xpcall(self.errProcess, traceback, pErr, req, resp
-            , node and node.errHandlers or self.matcher:rootErrHandlers(), finalHandler)
     end
 
     if pOk ~= true then
         finalHandler(pErr)
     end
+    --[[local ref = {}
+    doProcess(req, resp, self.matcher, finalHandler, ref)]]
 end
 
 -- auto generate forward function and cache them
